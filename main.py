@@ -15,7 +15,7 @@ app = Flask(__name__)
 CORS(app)
 
 # ✅ Model path
-MODEL_PATH = r"C:\Users\ARDRA\OneDrive\Desktop\MAINPROJECT\plant back\20240921-2014-full-image-set-mobilenetv2-Adam (1).h5"
+MODEL_PATH = r"C:\Users\ARDRA\OneDrive\Desktop\MAINPROJECT\plant back\20240921-2014-full-image-set-mobilenetv2-Adam (2).h5"
 
 # ✅ Load model with custom KerasLayer
 model = load_model(MODEL_PATH, custom_objects={'KerasLayer': hub.KerasLayer})

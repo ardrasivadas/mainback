@@ -98,19 +98,57 @@ app.post("/signup", async (req, res) => {
   }
 });
 
-// 🔑 User Login
-// 🔑 User Login Endpoint
+// Sign-In Route (Returns User Data + Token)
 app.post("/signin", async (req, res) => {
-  const { email, password } = req.body; // ✅ Expect "email" instead of "username"
+  const { email, password } = req.body;
+  const user = await User.findOne({ email });
+
+  if (!user) {
+    return res.status(400).json({ message: "User not found" });
+  }
+
+  const isMatch = await bcrypt.compare(password, user.password);
+  if (!isMatch) {
+    return res.status(400).json({ message: "Invalid credentials" });
+  }
+
+  const token = jwt.sign({ id: user._id }, "secretKey", { expiresIn: "1h" });
+
+  res.json({
+    token,
+    user: { name: user.name, email: user.email }, // Returning user details
+  });
+});
+
+// Fetch User Details (Using Token)
+app.get("/user", async (req, res) => {
+  const token = req.headers.authorization?.split(" ")[1]; // Extract token
+  if (!token) return res.status(401).json({ message: "Unauthorized" });
 
   try {
-      const user = await User.findOne({ email }); // ✅ Find user by "email"
-      if (!user) return res.status(401).json({ message: "Invalid credentials" });
+    const decoded = jwt.verify(token, "secretKey");
+    const user = await User.findById(decoded.id).select("-password"); // Exclude password
+    res.json(user);
+  } catch (error) {
+    res.status(401).json({ message: "Invalid token" });
+  }
+});
 
-      const isMatch = await bcrypt.compare(password, user.password);
-      if (!isMatch) return res.status(401).json({ message: "Invalid credentials" });
 
-      const token = jwt.sign({ userId: user._id, email: user.email }, JWT_SECRET, { expiresIn: "1h" });
+
+// 🔑 User Login
+// 🔑 User Login Endpoint
+// app.post("/signin", async (req, res) => {
+//   const { email, password } = req.body; // ✅ Expect "email" instead of "username"
+
+//   try {
+//       const user = await User.findOne({ email }); // ✅ Find user by "email"
+//       if (!user) return res.status(401).json({ message: "Invalid credentials" });
+
+//       const isMatch = await bcrypt.compare(password, user.password);
+//       if (!isMatch) return res.status(401).json({ message: "Invalid credentials" });
+
+//       const token = jwt.sign({ userId: user._id, email: user.email }, JWT_SECRET, { expiresIn: "1h" });
 
       // // Log user sign-in
       // const loginLog = new UserSignInLog({
@@ -123,12 +161,12 @@ app.post("/signin", async (req, res) => {
 
       // await loginLog.save();
 
-      res.json({ token });
-  } catch (error) {
-      console.error("User login error:", error);
-      res.status(500).json({ message: "Server error" });
-  }
-});
+//       res.json({ token });
+//   } catch (error) {
+//       console.error("User login error:", error);
+//       res.status(500).json({ message: "Server error" });
+//   }
+// });
 
 
 // 👤 Get User Info
@@ -143,32 +181,67 @@ app.get("/api/user", authenticateUser, async (req, res) => {
   }
 });
 
-// 📦 Orders API
-app.post("/api/orders", authenticateUser, async (req, res) => {
+app.post('/place-order', async (req, res) => {
   try {
-    const { items, totalAmount } = req.body;
-    if (!items || items.length === 0) {
-      return res.status(400).json({ message: "Order must contain at least one item." });
+      const { email, items, totalAmount } = req.body;
+      const user = await User.findOne({ email }); // 🔍 Find user by email
+
+      if (!user) {
+          return res.status(400).json({ message: 'User not found' });
+      }
+
+      const newOrder = new Order({
+          user: user._id, // ✅ Assign `user` field
+          email,
+          items,
+          totalAmount
+      });
+
+      await newOrder.save();
+      res.status(201).json({ message: 'Order placed successfully' });
+
+  } catch (error) {
+      console.error('Error placing order:', error);
+      res.status(500).json({ message: 'Server error' });
+  }
+});
+
+
+
+app.get("/myorders/:email", async (req, res) => {
+  try {
+    const email = req.params.email;
+    console.log("📩 API Request for orders with email:", email); // Debugging
+
+    // Find user role (assuming you store it in the User model)
+    const user = await User.findOne({ email: email });
+
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
     }
 
-    const newOrder = new Order({ userId: req.user.userId, items, totalAmount });
-    await newOrder.save();
+    let orders;
+    if (user.role === "admin") {
+      console.log("👑 Admin access granted! Fetching all orders.");
+      orders = await Order.find({}); // Fetch all orders for admin
+    } else {
+      console.log("👤 Regular user detected. Fetching only their orders.");
+      orders = await Order.find({ email: email }); // Fetch orders for specific user
+    }
 
-    res.status(201).json({ message: "Order placed successfully", order: newOrder });
+    console.log("📦 Orders fetched from DB:", orders); // Debugging
+    res.status(200).json(orders);
   } catch (error) {
-    res.status(500).json({ message: "Error placing order", error: error.message });
+    console.error("❌ Error fetching orders:", error);
+    res.status(500).json({ error: "Failed to fetch orders" });
   }
 });
 
-// 📦 Get Orders for a User
-app.get("/api/orders", authenticateUser, async (req, res) => {
-  try {
-    const orders = await Order.find({ userId: req.user.userId });
-    res.json(orders);
-  } catch (error) {
-    res.status(500).json({ message: "Error fetching orders", error: error.message });
-  }
-});
+
+
+
+
+
 
 /* ------------------- 🔍 Improved FastAPI Prediction Integration ------------------- */
 // 🖼 Multer Configuration for Image Uploads
@@ -270,16 +343,56 @@ app.post("/adminlogin", async (req, res) => {
 //   }
 // });
 
+
+app.get("/users", authenticateAdmin, async (req, res) => {
+  try {
+    const users = await User.find({}, "name email phone place"); // Fetching only necessary fields
+
+    if (!users.length) {
+      return res.status(200).json([]); // Return empty array if no users found
+    }
+
+    res.json(users);
+  } catch (error) {
+    console.error("Error fetching users:", error);
+    res.status(500).json({ message: "Error fetching user list" });
+  }
+});
+
+app.delete("/users/:id", authenticateAdmin, async (req, res) => {
+  try {
+    const userId = req.params.id;
+    const deletedUser = await User.findByIdAndDelete(userId);
+
+    if (!deletedUser) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    res.json({ message: "User deleted successfully" });
+  } catch (error) {
+    console.error("Error deleting user:", error);
+    res.status(500).json({ message: "Error deleting user" });
+  }
+});
+
 // Fetch only user sign-in logs (Admin only)
 app.get("/sign-in-logs/users", authenticateAdmin, async (req, res) => {
   try {
     const logs = await SignInLog.find({ role: "user" }).sort({ loginTime: -1 });
+
+    // Change this condition
+    if (!logs.length) {
+      return res.status(200).json([]); // Return an empty array instead of 404
+    }
+
     res.json(logs);
   } catch (error) {
     console.error("Error fetching user logs:", error);
     res.status(500).json({ message: "Error fetching user sign-in logs" });
   }
 });
+
+
 
 
 
@@ -321,8 +434,139 @@ process.on("uncaughtException", (err) => {
 
 process.on("unhandledRejection", (reason, promise) => {
   console.error("❌ Unhandled Rejection at:", promise, "reason:", reason);
+
 });
 
+
+// ✅ **API to Save Cart Items in Database**
+app.post('/cart', async (req, res) => {
+  const { userId, productId, quantity } = req.body;
+  if (!userId) return res.status(400).json({ message: "User not found" });
+
+  const user = await User.findById(userId);
+  if (!user) return res.status(404).json({ message: "User not found" });
+
+  const existingItem = user.cart.find(item => item.productId === productId);
+
+  if (existingItem) {
+      existingItem.quantity += quantity; // ✅ Update existing quantity
+  } else {
+      user.cart.push({ productId, quantity });
+  }
+  await user.save();
+  res.json({ cart: user.cart });
+});
+
+
+
+
+
+app.get("/cart/:userId", async (req, res) => {
+  const { userId } = req.params;
+  const user = await User.findById(userId);
+
+  if (!user) {
+      return res.status(404).json({ message: "User not found" });
+  }
+
+  res.json({ cart: user.cart });
+});
+
+
+
+app.get('/cart', async (req, res) => {
+  const userId = req.query.userId; // Ensure frontend sends userId
+  if (!userId) return res.status(400).json({ message: "User not found" });
+
+  const user = await User.findById(userId);
+  res.json(user.cart);
+});
+
+
+app.delete('/cart', async (req, res) => {
+  const { userId, productId } = req.body;
+  if (!userId) return res.status(400).json({ message: "User not found" });
+
+  const user = await User.findById(userId);
+  if (!user) return res.status(404).json({ message: "User not found" });
+
+  user.cart = user.cart.filter(item => item.productId !== productId);
+  await user.save();
+  res.json({ cart: user.cart });
+});
+
+
+app.get('/wishlist', async (req, res) => {
+  const userId = req.query.userId;
+  if (!userId) return res.status(400).json({ message: "User not found" });
+
+  const user = await User.findById(userId);
+  res.json(user.wishlist);
+});
+
+app.post('/wishlist', async (req, res) => {
+  const { userId, productId } = req.body;
+  if (!userId) return res.status(400).json({ message: "User not found" });
+
+  const user = await User.findById(userId);
+  if (!user.wishlist.some(item => item.productId === productId)) {
+      user.wishlist.push({ productId });
+  }
+  await user.save();
+  res.json(user.wishlist);
+});
+
+app.delete('/wishlist', async (req, res) => {
+  const { userId, productId } = req.body;
+  if (!userId) return res.status(400).json({ message: "User not found" });
+
+  const user = await User.findById(userId);
+  user.wishlist = user.wishlist.filter(item => item.productId !== productId);
+
+  await user.save();
+  res.json(user.wishlist);
+});
+
+// Updated API endpoint to fetch orders with complete user details
+app.get("/orders", async (req, res) => {
+  try {
+    console.log("🔄 Admin fetching all orders...");
+
+    // Fetch all orders
+    const orders = await Order.find({}).sort({ createdAt: -1 });
+
+    // Fetch user details for each order with proper field selection
+    const ordersWithUserDetails = await Promise.all(
+      orders.map(async (order) => {
+        // Find the user by email with selected fields
+        const user = await User.findOne({ email: order.email })
+          .select("name email phone place");
+        
+        // Return combined order and user data
+        return {
+          ...order._doc,
+          user: user ? {
+            name: user.name,
+            email: user.email,
+            contact: user.phone, // Map phone to contact for frontend consistency
+            place: user.place
+          } : { 
+            name: "Unknown", 
+            email: order.email,
+            contact: "N/A",
+            place: "N/A" 
+          }
+        };
+      })
+    );
+
+    console.log(`✅ Fetched ${ordersWithUserDetails.length} orders with user details`);
+    res.status(200).json(ordersWithUserDetails);
+  } catch (error) {
+    console.error("❌ Error fetching orders with user details:", error);
+    res.status(500).json({ error: "Failed to fetch orders with user details" });
+  }
+});
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
